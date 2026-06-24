@@ -1,0 +1,6 @@
+name: astrbot_plugin_opencode_remote
+display_name: OpenCode Remote Controller
+desc: "通过 AstrBot 远程控制 OpenCode Server/Web/TUI，支持会话、模型、工作路径、指令、自然语言和状态推送。"
+version: v1.0.0
+author: gitsang
+repo: https://github.com/lq-259/astrbot_plugin_opencode_remote

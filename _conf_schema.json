@@ -1,0 +1,155 @@
+{
+  "basic_config": {
+    "description": "基础配置",
+    "items": {
+      "connection_mode": {
+        "default": "server",
+        "description": "连接模式",
+        "hint": "server=无界面 HTTP API；web=浏览器 WebUI；tui=终端界面",
+        "options": ["server", "web", "tui"],
+        "type": "string"
+      },
+      "only_admin": {
+        "default": true,
+        "description": "仅限管理员使用",
+        "type": "bool"
+      },
+      "password": {
+        "default": "",
+        "description": "Basic Auth 密码",
+        "hint": "对应 OPENCODE_SERVER_PASSWORD 环境变量",
+        "obvious_hint": true,
+        "type": "string"
+      },
+      "server_url": {
+        "default": "http://127.0.0.1:4096",
+        "description": "OpenCode Server URL",
+        "type": "string"
+      },
+      "timeout": {
+        "default": 300,
+        "description": "请求超时(秒)",
+        "type": "int"
+      },
+      "username": {
+        "default": "opencode",
+        "description": "Basic Auth 用户名",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "model_config": {
+    "description": "模型配置",
+    "items": {
+      "default_model": {
+        "default": "",
+        "description": "默认模型 provider/model",
+        "type": "string"
+      },
+      "default_variant": {
+        "default": "",
+        "description": "默认思考等级/模型变体",
+        "options": ["", "none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "type": "string"
+      },
+      "show_thinking": {
+        "default": false,
+        "description": "推送思考内容",
+        "hint": "保留配置项；当前推送级别控制是否推送思考中提示，不推送推理正文",
+        "type": "bool"
+      }
+    },
+    "type": "object"
+  },
+  "notification_config": {
+    "description": "通知配置",
+    "items": {
+      "max_reconnect_attempts": {
+        "default": 10,
+        "description": "SSE 最大重连次数",
+        "hint": "0 表示无限重连",
+        "type": "int"
+      },
+      "output_level": {
+        "default": "simple",
+        "description": "SSE 推送级别",
+        "hint": "silence=权限/提问/错误/完成；simple=思考中+最终文本；summary=完成摘要；detail=工具过程+最终文本",
+        "options": ["silence", "simple", "summary", "detail"],
+        "type": "string"
+      },
+      "quick_prefix": {
+        "default": ">",
+        "description": "快捷发送前缀",
+        "hint": "如 '> 任务内容' 发送到当前会话，'>2 任务内容' 发送到第2个会话",
+        "type": "string"
+      },
+      "summary_msg_count": {
+        "default": 5,
+        "description": "summary 推送消息条数",
+        "type": "int"
+      }
+    },
+    "type": "object"
+  },
+  "security_config": {
+    "description": "安全配置",
+    "items": {
+      "confirm_delete": {
+        "default": true,
+        "description": "删除会话前确认",
+        "type": "bool"
+      },
+      "confirm_shell": {
+        "default": true,
+        "description": "执行 shell 前确认",
+        "type": "bool"
+      },
+      "confirm_timeout": {
+        "default": 30,
+        "description": "确认超时(秒)",
+        "type": "int"
+      },
+      "destructive_keywords": {
+        "default": ["删除", "格式化", "清空", "rm\\b", "delete\\b", "format\\b", "wipe\\b", "destroy\\b", "shutdown\\b", "reboot\\b", "mkfs", "dd\\b", "> /dev/"],
+        "description": "敏感关键词(正则)",
+        "type": "list"
+      }
+    },
+    "type": "object"
+  },
+  "tool_config": {
+    "description": "LLM 工具配置",
+    "items": {
+      "enable_llm_tools": {
+        "default": false,
+        "description": "启用自然语言工具",
+        "hint": "启用后提供会话查询、发送、切换、模型查询、目录切换等 OpenCode LLM 工具",
+        "type": "bool"
+      }
+    },
+    "type": "object"
+  },
+  "workspace_config": {
+    "description": "工作路径配置",
+    "items": {
+      "allowed_workdirs": {
+        "default": [],
+        "description": "允许切换的工作路径白名单",
+        "type": "list"
+      },
+      "check_path_safety": {
+        "default": true,
+        "description": "启用路径安全检查",
+        "hint": "开启后，只能访问白名单或默认路径下的目录",
+        "type": "bool"
+      },
+      "default_workdir": {
+        "default": "",
+        "description": "默认工作路径",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  }
+}
