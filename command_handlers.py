@@ -184,6 +184,7 @@ class CommandHandlers:
         "summary": ("会话", True),
         "messages": ("会话", True),
         "ask": ("消息", True),
+        "work": ("消息", True),
         "to": ("消息", True),
         "stop": ("消息", False),
         "commands": ("指令", False),
@@ -910,6 +911,23 @@ class CommandHandlers:
         yield event.plain_result(
             format_response_with_meta(result, self.state_mgr.get_window_state(umo))
         )
+
+    async def cmd_work(self, event: AstrMessageEvent, text: str = ""):
+        if not text:
+            yield event.plain_result("用法: /oc work <任务描述>")
+            return
+        prompt = (
+            f"你是 OpenCode，负责在当前仓库完成代码任务。\n\n"
+            f"用户请求：{text}\n\n"
+            f"执行要求：\n"
+            f"1. 先理解问题和相关代码。\n"
+            f"2. 只做必要修改，避免过度改动。\n"
+            f"3. 修改后运行最小必要验证。\n"
+            f"4. 不要推送远程分支，不要提交 git，除非用户明确要求。\n"
+            f"5. 最后用中文总结：根因、修改内容、验证结果、后续建议。\n"
+        )
+        result = await self.plugin.send_task_to_opencode(prompt, self._get_umo(event))
+        yield event.plain_result(result)
 
     async def cmd_to(self, event: AstrMessageEvent, args: str = ""):
         parts = args.split(None, 1)

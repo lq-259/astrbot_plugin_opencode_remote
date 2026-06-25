@@ -10,6 +10,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.message_components import Plain
 
+from astrbot.core.utils.session_waiter import session_waiter, SessionController
 from .opencode_client import OpenCodeClient
 from .state_manager import StateManager
 from .path_manager import PathManager, ModelManager
@@ -19,6 +20,7 @@ from .formatters import extract_text_from_parts, format_response_with_meta
 from .sse_listener import SSEListener
 from .notification_manager import NotificationManager
 from .llm_integration import LLMIntegration
+from .router import MessageRouter
 
 
 @register(
@@ -66,6 +68,7 @@ class OpenCodeRemotePlugin(Star):
         self._quick_prefix = config.get("notification_config", {}).get(
             "quick_prefix", ">"
         )
+        self.router = MessageRouter(config)
 
     # ──── 生命周期 ────
 
@@ -135,6 +138,48 @@ class OpenCodeRemotePlugin(Star):
         await self.sse_listener.stop()
         await self.client.close()
         logger.info("OpenCode Remote Plugin 已终止")
+
+    # ──── 公共任务发送 ────
+
+    async def send_task_to_opencode(self, text: str, umo: str, session_id: str = None) -> str:
+        """向 OpenCode 发送任务，返回格式化后的结果文本。"""
+        directory = self.state_mgr.get_current_directory(umo)
+        if not directory:
+            directory = self.path_mgr.default_workdir
+            if directory:
+                self.state_mgr.set_window_state(umo, directory=directory)
+                await self.state_mgr.persist_window_state(umo)
+
+        if not directory:
+            return "未设置工作路径"
+
+        sid = session_id or self.state_mgr.get_current_session(umo)
+        if not sid:
+            from . import session_ops
+            try:
+                sid = await session_ops.ensure_session(self.client, self.state_mgr, umo, directory)
+            except Exception as e:
+                return f"获取会话失败: {e}"
+
+        if not sid:
+            return "未绑定会话"
+
+        local_model = self.state_mgr.get_current_model(umo)
+        local_variant = self.state_mgr.get_current_variant(umo)
+        local_agent = self.state_mgr.get_current_agent(umo)
+        model_body = self.model_mgr.build_model_body(local_model) if local_model else None
+        variant = local_variant or None
+        agent = local_agent or None
+
+        try:
+            result = await self.client.session_prompt(
+                sid, text, directory=directory,
+                model=model_body, agent=agent, variant=variant
+            )
+            response_text = extract_text_from_parts(result.get("parts", []))
+            return format_response_with_meta(response_text or "(无响应)", self.state_mgr.get_window_state(umo))
+        except (httpx.HTTPError, json.JSONDecodeError, Exception) as e:
+            return f"请求失败: {e}"
 
     # ──── 权限 ────
 
@@ -247,38 +292,73 @@ class OpenCodeRemotePlugin(Star):
                 event.stop_event()
                 return
 
-        if not target_sid or not directory:
-            yield event.plain_result("未绑定会话")
-            event.stop_event()
+        if not text:
             return
 
-        # Only pass model/variant/agent if user explicitly set an override
-        # Otherwise let the server use the session's last-used config
-        model_body = None
-        variant = None
-        agent = None
-        local_model = self.state_mgr.get_current_model(umo)
-        local_variant = self.state_mgr.get_current_variant(umo)
-        local_agent = self.state_mgr.get_current_agent(umo)
-        if local_model:
-            model_body = self.model_mgr.build_model_body(local_model)
-        if local_variant:
-            variant = local_variant
-        if local_agent:
-            agent = local_agent
+        result_text = await self.send_task_to_opencode(text, umo, session_id=target_sid)
+        yield event.plain_result(result_text)
+        event.stop_event()
+
+    # ──── 自动路由 ────
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
+    async def auto_route_handler(self, event: AstrMessageEvent):
+        self.notification_mgr._event_cache[event.unified_msg_origin] = event
+        raw = event.message_str.strip()
+
+        # Skip command patterns handled elsewhere
+        if raw.startswith("/oc") or raw.startswith(self._quick_prefix):
+            return
+
+        if not self._can_use(event):
+            return
+
+        if not self.router.enable_auto_route or self.router.mode == "off":
+            return
+
+        decision = self.router.classify(raw)
+
+        if decision.action == "chat":
+            return
+
+        # From here we intercept the message
+        event.stop_event()
+
+        if decision.action == "opencode":
+            result = await self.send_task_to_opencode(
+                decision.rewritten_task, event.unified_msg_origin
+            )
+            yield event.plain_result(f"[OpenCode] {result}")
+            return
+
+        # confirm mode
+        yield event.plain_result(
+            f"这看起来是代码任务（{decision.reason}），确认交给 OpenCode 执行吗？\n"
+            f"回复「确认」执行，其他内容取消"
+        )
+
+        approved = False
+        choice_event = asyncio.Event()
+
+        @session_waiter(timeout=self.router.confirm_timeout)
+        async def wait_confirm(c, e: AstrMessageEvent):
+            nonlocal approved
+            if e.message_str.strip() in ("确认", "是", "yes", "y"):
+                approved = True
+            choice_event.set()
+            c.stop()
 
         try:
-            result = await self.client.session_prompt(
-                target_sid, text, directory=directory,
-                model=model_body, agent=agent, variant=variant
-            )
-            response_text = extract_text_from_parts(result.get("parts", []))
-            formatted = format_response_with_meta(
-                response_text or "(无响应)",
-                self.state_mgr.get_window_state(umo),
-            )
-            yield event.plain_result(formatted)
-        except (httpx.HTTPError, json.JSONDecodeError, Exception) as e:
-            yield event.plain_result(f"请求失败: {e}")
+            await wait_confirm(event)
+            await choice_event.wait()
+        except TimeoutError:
+            yield event.plain_result("确认超时，已取消")
+            return
 
-        event.stop_event()
+        if approved:
+            result = await self.send_task_to_opencode(
+                decision.rewritten_task, event.unified_msg_origin
+            )
+            yield event.plain_result(f"[OpenCode] {result}")
+        else:
+            yield event.plain_result("已取消")

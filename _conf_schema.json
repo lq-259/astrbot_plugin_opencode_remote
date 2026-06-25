@@ -130,6 +130,68 @@
     },
     "type": "object"
   },
+  "router_config": {
+    "description": "聊天-工作路由配置",
+    "items": {
+      "enable_auto_route": {
+        "default": false,
+        "description": "启用自动路由",
+        "hint": "开启后，疑似代码任务的普通消息会被路由到 OpenCode。建议先测试确认模式。",
+        "type": "bool"
+      },
+      "mode": {
+        "default": "confirm",
+        "description": "路由模式",
+        "hint": "off=关闭自动路由；confirm=疑似任务先询问确认；auto=高置信度任务直接执行",
+        "options": ["off", "confirm", "auto"],
+        "type": "string"
+      },
+      "work_prefixes": {
+        "default": ["/work", "/code"],
+        "description": "显式工作前缀列表",
+        "hint": "消息以此开头时，直接作为 OpenCode 任务执行，不经过评分判断",
+        "type": "list"
+      },
+      "confirm_threshold": {
+        "default": 0.65,
+        "description": "确认阈值",
+        "hint": "任务评分超过此值时进入确认流程（询问用户是否执行）",
+        "type": "float"
+      },
+      "auto_threshold": {
+        "default": 0.85,
+        "description": "自动执行阈值",
+        "hint": "任务评分超过此值且模式为 auto 时，直接执行不询问",
+        "type": "float"
+      },
+      "confirm_timeout": {
+        "default": 60,
+        "description": "路由确认超时(秒)",
+        "hint": "等待用户确认/取消的超时时间",
+        "type": "int"
+      },
+      "ignore_group_messages_without_mention": {
+        "default": true,
+        "description": "群聊中忽略未 @ 的消息",
+        "hint": "开启后，群聊中的普通消息除非 @ Bot 或被显式前缀触发，否则不走自动路由",
+        "type": "bool"
+      },
+      "work_keywords": {
+        "default": [
+          "修复", "bug", "改错", "报错", "error", "failed", "失败",
+          "代码", "code", "coding", "编程", "开发", "dev",
+          "实现", "添加功能", "补", "重构", "refactor",
+          "优化", "性能", "慢", "卡", "崩溃", "crash",
+          "CI", "构建", "build", "测试", "test",
+          "部署", "deploy", "跑不通", "跑不起来"
+        ],
+        "description": "工作任务关键词列表",
+        "hint": "命中关键词会增加任务评分",
+        "type": "list"
+      }
+    },
+    "type": "object"
+  },
   "workspace_config": {
     "description": "工作路径配置",
     "items": {

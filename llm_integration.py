@@ -27,6 +27,12 @@ class LLMIntegration:
     # ──── 工具可见性控制 ────
 
     async def on_llm_request_hook(self, event: AstrMessageEvent, request: ProviderRequest):
+        # Priority 1: Respect enable_llm_tools setting
+        tool_cfg = self.plugin.config.get("tool_config", {})
+        if not tool_cfg.get("enable_llm_tools", False):
+            self._remove_all_tools(request)
+            return
+
         if not self.plugin._can_use(event):
             self._remove_all_tools(request)
             return
