@@ -24,12 +24,52 @@ class LLMIntegration:
         self.pending_mgr = plugin.pending_mgr
         self._last_search_results: dict[str, list[dict]] = {}
 
+    # ──── 工具分类 ────
+
+    QUERY_TOOLS = {
+        "opencode_get_session_detail",
+        "opencode_search_sessions",
+        "opencode_list_workdirs",
+        "opencode_get_recent_messages",
+        "opencode_get_last_error",
+        "opencode_list_models",
+        "opencode_list_commands",
+        "opencode_list_files",
+        "opencode_read_file",
+    }
+
+    SCHEDULE_TOOLS = {
+        "opencode_schedule_task",
+        "opencode_list_scheduled_tasks",
+        "opencode_cancel_scheduled_task",
+    }
+
+    ACTION_TOOLS = {
+        "opencode_send_message",
+        "opencode_switch_workdir",
+        "opencode_switch_session",
+        "opencode_rename_session",
+        "opencode_archive_session",
+        "opencode_unarchive_session",
+        "opencode_delete_session",
+        "opencode_run_command",
+        "opencode_create_session",
+        "opencode_stop",
+        "opencode_set_model",
+        "opencode_set_agent",
+        "opencode_clear_model_override",
+        "opencode_write_file",
+    }
+
     # ──── 工具可见性控制 ────
 
     async def on_llm_request_hook(self, event: AstrMessageEvent, request: ProviderRequest):
-        # Priority 1: Respect enable_llm_tools setting
         tool_cfg = self.plugin.config.get("tool_config", {})
-        if not tool_cfg.get("enable_llm_tools", False):
+        enable_query = tool_cfg.get("enable_llm_query_tools", False)
+        enable_schedule = tool_cfg.get("enable_llm_schedule_tools", False)
+        enable_action = tool_cfg.get("enable_llm_action_tools", False)
+
+        if not enable_query and not enable_schedule and not enable_action:
             self._remove_all_tools(request)
             return
 
@@ -37,22 +77,29 @@ class LLMIntegration:
             self._remove_all_tools(request)
             return
 
-        umo = event.unified_msg_origin
-        directory = self.state_mgr.get_current_directory(umo)
-        current_sid = self.state_mgr.get_current_session(umo)
+        # Determine allowed set based on tier hierarchy
+        allowed = set()
+        if enable_query:
+            allowed |= self.QUERY_TOOLS
+        if enable_schedule:
+            allowed |= self.QUERY_TOOLS | self.SCHEDULE_TOOLS
+        if enable_action:
+            allowed |= self.QUERY_TOOLS | self.SCHEDULE_TOOLS | self.ACTION_TOOLS
 
-        if not directory and not current_sid:
-            self._remove_all_tools(request, keep_basic=True)
-            return
+        self._filter_tools(request, allowed)
 
-    def _remove_all_tools(self, request: ProviderRequest, keep_basic: bool = False):
+    def _remove_all_tools(self, request: ProviderRequest):
         if not hasattr(request, 'func_tool') or not request.func_tool:
             return
-        basic = {"opencode_search_sessions", "opencode_list_commands"}
         for name in list(request.func_tool._tools.keys()):
-            if keep_basic and name in basic:
-                continue
             if name.startswith("opencode_"):
+                request.func_tool.remove_tool(name)
+
+    def _filter_tools(self, request: ProviderRequest, allowed: set):
+        if not hasattr(request, 'func_tool') or not request.func_tool:
+            return
+        for name in list(request.func_tool._tools.keys()):
+            if name.startswith("opencode_") and name not in allowed:
                 request.func_tool.remove_tool(name)
 
     async def _sync_actual_session_meta(self, umo: str) -> dict:
@@ -455,15 +502,15 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_send_message")
     async def tool_send_message(self, event: AstrMessageEvent, message: str, target: str = ""):
-        '''向 OpenCode 会话发送任务。target 为空时发送到当前会话。
+        '''向 OpenCode 会话发送任务。target 为空时发送到当前会话。会走任务队列和敏感词检查。
 
         Args:
             message(string): 任务内容
             target(string): 可选，会话序号、ID 前缀或标题关键词
         '''
         umo = event.unified_msg_origin
-        directory = self.state_mgr.get_current_directory(umo)
-        sid = self.state_mgr.get_current_session(umo)
+        target_sid = None
+
         if target:
             last_results = self._last_search_results.get(umo) or []
             sessions = last_results if target.isdigit() and last_results else await self._search_sessions(target, limit=30)
@@ -487,38 +534,10 @@ class LLMIntegration:
             if not chosen:
                 yield f"未找到会话: {target}"
                 return
-            sid = chosen["id"]
-            directory = chosen.get("directory") or directory
-        if not sid:
-            if directory:
-                try:
-                    sess = await self.client.session_create(directory=directory)
-                    sid = sess.get("id", "")
-                    self.state_mgr.set_window_state(umo, current_session=sid)
-                    self.state_mgr.set_session_owner(sid, umo)
-                    await self.state_mgr.persist_window_state(umo)
-                    await self.state_mgr.persist_session_owners()
-                except Exception:
-                    pass
-        if not sid:
-            yield "未绑定会话"
-            return
-        local_model = self.state_mgr.get_current_model(umo)
-        local_variant = self.state_mgr.get_current_variant(umo)
-        model_body = self.model_mgr.build_model_body(local_model) if local_model else None
-        variant = local_variant or None
-        agent = self.state_mgr.get_current_agent(umo) or None
-        try:
-            result = await self.client.session_prompt(
-                sid, message, directory=directory,
-                model=model_body, agent=agent, variant=variant
-            )
-            yield format_response_with_meta(
-                extract_text_from_parts(result.get("parts", [])) or "执行完成",
-                self.state_mgr.get_window_state(umo),
-            )
-        except Exception as e:
-            yield f"请求失败: {e}"
+            target_sid = chosen["id"]
+
+        result = await self.plugin.send_task_to_opencode(message, umo, session_id=target_sid)
+        yield result
 
     @filter.llm_tool(name="opencode_switch_session")
     async def tool_switch_session(self, event: AstrMessageEvent, target: str):

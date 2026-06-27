@@ -361,27 +361,27 @@ RouteDecision(
 
 ### 7.3 修改 `llm_integration.py`
 
-改造点：在 `on_llm_request_hook()` 开头优先判断 `enable_llm_tools`。
+改造点：将 `enable_llm_tools` 单一开关替换为三层开关。
 
-目标逻辑：
+三层工具分类：
 
-```python
-tool_cfg = self.plugin.config.get("tool_config", {})
-if not tool_cfg.get("enable_llm_tools", False):
-    self._remove_all_tools(request)
-    return
-```
+- **查询层** (`enable_llm_query_tools`)：只读操作，零风险。包含 `opencode_search_sessions`、`opencode_get_session_detail`、`opencode_list_models`、`opencode_read_file` 等。
+- **调度层** (`enable_llm_schedule_tools`)：延迟执行，低风险。包含 `opencode_schedule_task`、`opencode_list_scheduled_tasks`、`opencode_cancel_scheduled_task`。开启调度层时自动开启查询层。
+- **执行层** (`enable_llm_action_tools`)：立即执行，高风险（可能绕过路由确认）。包含 `opencode_send_message`、`opencode_run_command`、`opencode_write_file` 等。开启执行层时自动开启查询和调度层。
 
-原因：
+默认全部关闭。
 
-- 第一阶段不建议让 AstrBot 主 LLM 直接调用 OpenCode tools。
-- 避免主模型绕过路由层。
-- 让配置含义和实际行为一致。
+`opencode_send_message` 改为调用 `plugin.send_task_to_opencode()`，确保：
+- 走任务队列（同目录不并行）
+- 走敏感词检查
+- 不走确认流程（LLM 已自行决策）
 
 验收标准：
 
-- `enable_llm_tools=false` 时，`opencode_*` tools 不暴露。
-- `enable_llm_tools=true` 时，保留原有工具可见性控制逻辑。
+- 三个开关都关时，`opencode_*` tools 不暴露。
+- 只开查询层时，LLM 只能查询，不能执行或调度。
+- 开调度层时，自动包含查询层工具。
+- 开执行层时，自动包含查询+调度层工具。
 
 ### 7.4 修改 `main.py`
 

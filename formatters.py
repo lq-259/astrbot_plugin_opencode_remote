@@ -153,7 +153,7 @@ def format_config_summary(config: dict) -> str:
         "",
         f"  默认模型: {model.get('default_model', '未设置')}",
         f"  默认思考等级: {model.get('default_variant', '未设置')}",
-        f"  LLM 工具: {config.get('tool_config', {}).get('enable_llm_tools', False)}",
+        f"  LLM 工具: query={tool.get('enable_llm_query_tools', False)} schedule={tool.get('enable_llm_schedule_tools', False)} action={tool.get('enable_llm_action_tools', False)}",
     ]
     return "\n".join(lines)
 

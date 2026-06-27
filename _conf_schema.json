@@ -131,12 +131,24 @@
     "type": "object"
   },
   "tool_config": {
-    "description": "LLM 工具配置",
+    "description": "LLM 工具配置（三层开关：查询/调度/执行）",
     "items": {
-      "enable_llm_tools": {
+      "enable_llm_query_tools": {
         "default": false,
-        "description": "启用自然语言工具",
-        "hint": "启用后提供会话查询、发送、切换、模型查询、目录切换等 OpenCode LLM 工具",
+        "description": "启用只读查询工具",
+        "hint": "LLM 可查询 OpenCode 状态（会话、模型、文件、目录），不会执行任何操作，零风险",
+        "type": "bool"
+      },
+      "enable_llm_schedule_tools": {
+        "default": false,
+        "description": "启用调度工具",
+        "hint": "LLM 可调度未来的 OpenCode 任务（不立即执行），低风险。需同时开启查询工具",
+        "type": "bool"
+      },
+      "enable_llm_action_tools": {
+        "default": false,
+        "description": "启用执行工具",
+        "hint": "LLM 可立即执行 OpenCode 操作（发送任务、写文件、删会话等），高风险，可能绕过路由确认流程",
         "type": "bool"
       }
     },
