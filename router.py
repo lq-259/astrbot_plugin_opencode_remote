@@ -1,5 +1,6 @@
 """聊天-工作路由模块：判断用户消息是普通聊天还是代码工作任务"""
 from dataclasses import dataclass
+import json
 import re
 
 
@@ -23,6 +24,8 @@ class MessageRouter:
         self.auto_threshold = router_cfg.get("auto_threshold", 0.85)
         self.work_keywords = [kw.lower() for kw in router_cfg.get("work_keywords", [])]
         self.ignore_group_no_mention = router_cfg.get("ignore_group_messages_without_mention", True)
+        self.enable_llm_intent = router_cfg.get("enable_llm_intent", False)
+        self.intent_model = router_cfg.get("intent_model", "")
 
     def classify(self, raw_text: str, is_group: bool = False, is_mentioned: bool = False) -> RouteDecision:
         """判断一条消息应该 chat / confirm / opencode"""
@@ -83,6 +86,65 @@ class MessageRouter:
                 confidence=score,
                 rewritten_task="",
             )
+
+    async def classify_with_llm(self, raw_text: str, llm_callable) -> RouteDecision | None:
+        """当规则评分不确定时，调用 LLM 做二次判断。
+
+        Args:
+            raw_text: 用户原始消息
+            llm_callable: 异步 callable，接收 system_prompt 和 prompt，返回 LLMResponse 或字符串
+        """
+        system = (
+            "你是一个消息意图分类器。判断用户消息是否是代码工作任务。"
+            "只返回 JSON，不要任何解释。格式："
+            '{"is_work_task": true/false, "confidence": 0.0~1.0, "reason": "简短原因"}'
+        )
+        prompt = f"用户消息：{raw_text}\n\n请判断这是否是代码工作任务。"
+        try:
+            resp = await llm_callable(system_prompt=system, prompt=prompt)
+            # Parse JSON from response
+            result_text = ""
+            if hasattr(resp, "result_chain") and resp.result_chain:
+                result_text = resp.result_chain.get_plain_text()
+            elif hasattr(resp, "completion_text"):
+                result_text = resp.completion_text
+            elif hasattr(resp, "text"):
+                result_text = resp.text
+            else:
+                result_text = str(resp)
+
+            # Extract JSON
+            json_match = re.search(r'\{.*?\}', result_text, re.DOTALL)
+            if not json_match:
+                return None
+            result = json.loads(json_match.group())
+            is_work = result.get("is_work_task", False)
+            confidence = float(result.get("confidence", 0.0))
+            reason = result.get("reason", "LLM 判断")
+
+            if is_work and confidence >= self.auto_threshold:
+                return RouteDecision(
+                    action="opencode",
+                    reason=f"LLM 判断：{reason}",
+                    confidence=confidence,
+                    rewritten_task=raw_text,
+                )
+            elif is_work and confidence >= self.confirm_threshold:
+                return RouteDecision(
+                    action="confirm",
+                    reason=f"LLM 判断：{reason}",
+                    confidence=confidence,
+                    rewritten_task=raw_text,
+                )
+            else:
+                return RouteDecision(
+                    action="chat",
+                    reason=f"LLM 判断非工作任务：{reason}",
+                    confidence=confidence,
+                    rewritten_task="",
+                )
+        except Exception:
+            return None
 
     def _score(self, lower: str, original: str) -> tuple[float, list[str]]:
         """返回 (score, reasons_list)"""

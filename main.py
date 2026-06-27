@@ -331,6 +331,18 @@ class OpenCodeRemotePlugin(Star):
 
         decision = self.router.classify(raw, is_group=is_group, is_mentioned=is_mentioned)
 
+        # LLM 意图分类补充判断（仅在规则评分不确定时）
+        if decision.action in ("confirm", "opencode") and self.router.enable_llm_intent:
+            if self.confirm_threshold <= decision.confidence < self.auto_threshold:
+                llm_decision = await self.router.classify_with_llm(raw, self._llm_intent_call)
+                if llm_decision:
+                    decision = RouteDecision(
+                        action=llm_decision.action,
+                        reason=f"{decision.reason}；{llm_decision.reason}",
+                        confidence=llm_decision.confidence,
+                        rewritten_task=llm_decision.rewritten_task,
+                    )
+
         if decision.action == "chat":
             return
 

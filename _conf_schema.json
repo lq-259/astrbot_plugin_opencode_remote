@@ -176,6 +176,18 @@
         "hint": "开启后，群聊中的普通消息除非 @ Bot 或被显式前缀触发，否则不走自动路由",
         "type": "bool"
       },
+      "intent_model": {
+        "default": "",
+        "description": "意图分类模型",
+        "hint": "用于 LLM 意图分类的模型 provider/model，留空则使用当前会话模型。建议用轻量模型如 openai/gpt-4o-mini",
+        "type": "string"
+      },
+      "enable_llm_intent": {
+        "default": false,
+        "description": "启用 LLM 意图分类",
+        "hint": "开启后，当规则评分在 confirm_threshold 和 auto_threshold 之间时，调用 LLM 做二次判断",
+        "type": "bool"
+      },
       "work_keywords": {
         "default": [
           "修复", "bug", "改错", "报错", "error", "failed", "失败",
