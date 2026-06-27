@@ -466,6 +466,57 @@ class SSEListener:
             text = content
         await self._push(text, directory, session_id)
 
+        # Auto summary after idle push
+        if event_type == "session.idle" and session_id and directory and self.state_mgr:
+            plugin = getattr(self.state_mgr, "plugin", None)
+            auto_summary = getattr(plugin, "config", {}).get("notification_config", {}).get("auto_summary", False) if plugin else False
+            if auto_summary:
+                try:
+                    await self._push_summary(session_id, directory)
+                except Exception as e:
+                    logger.warning("Auto summary failed: %s", e)
+
+    async def _push_summary(self, session_id: str, directory: str):
+        """抓取 diff 并推送变更摘要"""
+        plugin = getattr(self.state_mgr, "plugin", None)
+        if not plugin:
+            return
+        try:
+            diff = await plugin.client.session_git_diff(session_id, directory)
+        except Exception as e:
+            logger.warning("session_git_diff failed: %s", e)
+            return
+        if not diff or not diff.strip():
+            return
+
+        # Parse diff to count files and stats
+        files = set()
+        added = 0
+        removed = 0
+        for line in diff.splitlines():
+            if line.startswith("diff --git"):
+                # Extract file path from "diff --git a/xxx b/xxx"
+                parts = line.split()
+                if len(parts) >= 4:
+                    files.add(parts[2][2:] if parts[2].startswith("a/") else parts[2])
+            elif line.startswith("+") and not line.startswith("+++"):
+                added += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                removed += 1
+
+        summary = (
+            f"📋 变更摘要\n"
+            f"  涉及文件: {len(files)} 个\n"
+            f"  新增行数: {added}\n"
+            f"  删除行数: {removed}\n"
+        )
+        if files:
+            file_list = "\n".join(f"    - {f}" for f in sorted(files)[:10])
+            summary += f"  文件列表:\n{file_list}"
+            if len(files) > 10:
+                summary += f"\n    ... 等共 {len(files)} 个文件"
+        await self._push(summary, directory, session_id)
+
     async def _push_permission_request(self, props: dict, directory: str, session_id: str):
         logger.info("SSE permission raw: %s", str(props)[:500])
 

@@ -88,6 +88,12 @@
         "default": 5,
         "description": "summary 推送消息条数",
         "type": "int"
+      },
+      "auto_summary": {
+        "default": false,
+        "description": "任务完成后自动推送变更摘要",
+        "hint": "开启后，session.idle 事件触发时会抓取 Git diff 并推送变更统计",
+        "type": "bool"
       }
     },
     "type": "object"
