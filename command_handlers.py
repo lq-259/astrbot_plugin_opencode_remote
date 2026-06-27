@@ -206,6 +206,7 @@ class CommandHandlers:
         "files": ("文件", True),
         "diff": ("会话", False),
         "commit": ("会话", True),
+        "project": ("路径", True),
     }
 
     async def route(self, event: AstrMessageEvent, remainder: str):
@@ -1340,6 +1341,78 @@ class CommandHandlers:
             yield event.plain_result(f"已提交:\n{output[:500]}")
         except Exception as e:
             yield event.plain_result(f"提交失败: {e}")
+
+    async def cmd_project(self, event: AstrMessageEvent, args: str = ""):
+        """项目别名管理：add/remove/list/use"""
+        parts = args.split(None, 1)
+        if not parts:
+            yield event.plain_result("用法: /oc project add|remove|list|use <别名> [路径]")
+            return
+
+        sub = parts[0].lower()
+        aliases = self.config.get("project_aliases", {})
+
+        if sub == "list":
+            if not aliases:
+                yield event.plain_result("没有配置项目别名")
+                return
+            lines = ["项目别名:"]
+            for alias, path in aliases.items():
+                lines.append(f"  {alias} -> {path}")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if sub == "add":
+            rest = parts[1] if len(parts) > 1 else ""
+            aparts = rest.split(None, 1)
+            if len(aparts) < 2:
+                yield event.plain_result("用法: /oc project add <别名> <路径>")
+                return
+            alias, path = aparts[0], aparts[1]
+            from astrbot.core.star.config import update_config
+            aliases[alias] = path
+            update_config("astrbot_plugin_opencode_remote", "project_aliases", aliases)
+            yield event.plain_result(f"已添加别名: {alias} -> {path}")
+            return
+
+        if sub == "remove":
+            rest = parts[1] if len(parts) > 1 else ""
+            if not rest:
+                yield event.plain_result("用法: /oc project remove <别名>")
+                return
+            alias = rest.strip()
+            if alias not in aliases:
+                yield event.plain_result(f"别名不存在: {alias}")
+                return
+            from astrbot.core.star.config import update_config
+            del aliases[alias]
+            update_config("astrbot_plugin_opencode_remote", "project_aliases", aliases)
+            yield event.plain_result(f"已删除别名: {alias}")
+            return
+
+        if sub == "use":
+            rest = parts[1] if len(parts) > 1 else ""
+            if not rest:
+                yield event.plain_result("用法: /oc project use <别名>")
+                return
+            alias = rest.strip()
+            if alias not in aliases:
+                yield event.plain_result(f"别名不存在: {alias}")
+                return
+            path = aliases[alias]
+            if not os.path.isdir(path):
+                yield event.plain_result(f"路径不存在: {path}")
+                return
+            if self.path_mgr.check_path_safety and not self.path_mgr.is_path_allowed(path):
+                yield event.plain_result(f"路径不在白名单中: {path}")
+                return
+            umo = self._get_umo(event)
+            self.state_mgr.set_window_state(umo, directory=path)
+            await self.state_mgr.persist_window_state(umo)
+            yield event.plain_result(f"已切换工作路径: {path} (别名: {alias})")
+            return
+
+        yield event.plain_result("未知子命令。用法: /oc project add|remove|list|use")
 
     # ──── 辅助方法 ────
 

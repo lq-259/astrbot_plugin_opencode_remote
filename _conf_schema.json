@@ -204,6 +204,12 @@
     },
     "type": "object"
   },
+  "project_aliases": {
+    "description": "项目别名配置",
+    "items": {},
+    "hint": "键为别名，值为路径。示例: {\"api\": \"/projects/api-service\"}",
+    "type": "object"
+  },
   "workspace_config": {
     "description": "工作路径配置",
     "items": {
