@@ -818,3 +818,149 @@ class LLMIntegration:
             yield "\n".join(lines)
         except Exception as e:
             yield f"列出文件失败: {e}"
+
+    @filter.llm_tool(name="opencode_schedule_task")
+    async def tool_schedule_task(
+        self,
+        event: AstrMessageEvent,
+        task: str,
+        cron: str = "",
+        run_at: str = "",
+    ):
+        '''调度一个 OpenCode 任务在将来执行（通过 AstrBot 主动 Agent 能力）。
+
+        Args:
+            task(string): OpenCode 任务描述
+            cron(string): 周期性 cron 表达式（如 "0 8 * * *" 表示每天 8 点）
+            run_at(string): 一次性 ISO 时间（如 "2026-06-29T08:00:00"）
+        '''
+        if not cron and not run_at:
+            yield "必须指定 cron 表达式或 run_at 时间"
+            return
+        if cron and run_at:
+            yield "cron 和 run_at 只能指定一个"
+            return
+
+        umo = event.unified_msg_origin
+        sender_id = str(event.get_sender_id())
+        session_str = ""
+        try:
+            if hasattr(event, "session") and event.session:
+                session_str = str(event.session)
+        except Exception:
+            pass
+
+        cron_mgr = getattr(self.plugin.context, "cron_manager", None)
+        if cron_mgr is None:
+            yield "AstrBot cron_manager 不可用"
+            return
+
+        short = task[:30].replace("\n", " ")
+        base_name = f"opencode:{umo}:{short}"
+
+        if run_at:
+            from datetime import datetime
+            try:
+                run_at_dt = datetime.fromisoformat(run_at)
+            except ValueError as e:
+                yield f"run_at 格式错误: {e}"
+                return
+            if run_at_dt.tzinfo is None:
+                from datetime import timezone
+                run_at_dt = run_at_dt.replace(tzinfo=timezone.utc)
+            try:
+                job = await cron_mgr.add_active_job(
+                    name=base_name,
+                    cron_expression=None,
+                    run_at=run_at_dt,
+                    run_once=True,
+                    payload={
+                        "sender_id": sender_id,
+                        "session": session_str,
+                        "note": f"执行 OpenCode 任务: {task}",
+                        "opencode_task": task,
+                    },
+                    description=f"OpenCode 任务: {task[:50]}",
+                )
+            except Exception as e:
+                yield f"调度失败: {e}"
+                return
+        else:
+            try:
+                job = await cron_mgr.add_active_job(
+                    name=base_name,
+                    cron_expression=cron,
+                    payload={
+                        "sender_id": sender_id,
+                        "session": session_str,
+                        "note": f"执行 OpenCode 任务: {task}",
+                        "opencode_task": task,
+                    },
+                    description=f"OpenCode 任务: {task[:50]}",
+                )
+            except Exception as e:
+                yield f"调度失败: {e}"
+                return
+
+        schedule = f"一次性 {run_at}" if run_at else f"cron: {cron}"
+        yield f"已调度任务 [{job.job_id[:8]}] ({schedule}): {task[:60]}"
+
+    @filter.llm_tool(name="opencode_list_scheduled_tasks")
+    async def tool_list_scheduled_tasks(self, event: AstrMessageEvent):
+        '''列出当前会话已调度的 OpenCode 任务。'''
+        cron_mgr = getattr(self.plugin.context, "cron_manager", None)
+        if cron_mgr is None:
+            yield "AstrBot cron_manager 不可用"
+            return
+        umo = event.unified_msg_origin
+        try:
+            jobs = await cron_mgr.list_jobs("active_agent")
+        except Exception as e:
+            yield f"获取任务列表失败: {e}"
+            return
+        our_jobs = [j for j in jobs if j.name.startswith(f"opencode:{umo}:")]
+        if not our_jobs:
+            yield "没有调度的任务"
+            return
+        lines = [f"已调度任务 ({len(our_jobs)}):"]
+        for j in our_jobs:
+            short_name = j.name[len(f"opencode:{umo}:"):]
+            if j.run_once:
+                run_info = f"一次性 @ {j.cron_expression or '?'}"
+            else:
+                run_info = f"周期: {j.cron_expression}"
+            lines.append(f"  [{j.job_id[:8]}] {short_name} - {run_info}")
+        yield "\n".join(lines)
+
+    @filter.llm_tool(name="opencode_cancel_scheduled_task")
+    async def tool_cancel_scheduled_task(self, event: AstrMessageEvent, job_id_prefix: str):
+        '''取消调度的 OpenCode 任务。
+
+        Args:
+            job_id_prefix(string): 任务 ID 前缀
+        '''
+        cron_mgr = getattr(self.plugin.context, "cron_manager", None)
+        if cron_mgr is None:
+            yield "AstrBot cron_manager 不可用"
+            return
+        umo = event.unified_msg_origin
+        try:
+            jobs = await cron_mgr.list_jobs("active_agent")
+        except Exception as e:
+            yield f"获取任务列表失败: {e}"
+            return
+        match = None
+        for j in jobs:
+            if not j.name.startswith(f"opencode:{umo}:"):
+                continue
+            if j.job_id.startswith(job_id_prefix) or j.job_id == job_id_prefix:
+                match = j
+                break
+        if not match:
+            yield f"未找到任务: {job_id_prefix}"
+            return
+        try:
+            await cron_mgr.delete_job(match.job_id)
+            yield f"已取消任务 {match.job_id[:8]}"
+        except Exception as e:
+            yield f"取消失败: {e}"

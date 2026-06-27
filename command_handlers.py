@@ -213,6 +213,7 @@ class CommandHandlers:
         "log": ("会话", True),
         "stash": ("会话", False),
         "stats": ("基础", False),
+        "schedule": ("调度", True),
     }
 
     async def route(self, event: AstrMessageEvent, remainder: str):
@@ -1588,6 +1589,83 @@ class CommandHandlers:
             f"  SSE 重连: {stats.get('sse_reconnects', 0)}",
         ]
         yield event.plain_result("\n".join(lines))
+
+    async def cmd_schedule(self, event: AstrMessageEvent, args: str = ""):
+        """管理 OpenCode 定时任务: list/remove/clear"""
+        cron_mgr = getattr(self.plugin.context, "cron_manager", None)
+        if cron_mgr is None:
+            yield event.plain_result("AstrBot cron_manager 不可用")
+            return
+
+        parts = args.split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        umo = self._get_umo(event)
+
+        if sub in ("", "list"):
+            try:
+                jobs = await cron_mgr.list_jobs("active_agent")
+            except Exception as e:
+                yield event.plain_result(f"获取任务失败: {e}")
+                return
+            our_jobs = [j for j in jobs if j.name.startswith(f"opencode:{umo}:")]
+            if not our_jobs:
+                yield event.plain_result("没有调度的 OpenCode 任务")
+                return
+            lines = [f"已调度的 OpenCode 任务 ({len(our_jobs)}):"]
+            for j in our_jobs:
+                short = j.name[len(f"opencode:{umo}:"):]
+                if j.run_once:
+                    run_info = f"一次性 @ {j.cron_expression or '(未设置)'}"
+                else:
+                    run_info = f"周期: {j.cron_expression}"
+                desc = (j.description or "").replace("OpenCode 任务: ", "")[:50]
+                lines.append(f"  [{j.job_id[:8]}] {desc}\n    {run_info} | 名称: {short}")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if sub == "remove":
+            prefix = parts[1].strip() if len(parts) > 1 else ""
+            if not prefix:
+                yield event.plain_result("用法: /oc schedule remove <任务ID前缀>")
+                return
+            try:
+                jobs = await cron_mgr.list_jobs("active_agent")
+            except Exception as e:
+                yield event.plain_result(f"获取任务失败: {e}")
+                return
+            match = None
+            for j in jobs:
+                if not j.name.startswith(f"opencode:{umo}:"):
+                    continue
+                if j.job_id.startswith(prefix) or j.job_id == prefix:
+                    match = j
+                    break
+            if not match:
+                yield event.plain_result(f"未找到任务: {prefix}")
+                return
+            try:
+                await cron_mgr.delete_job(match.job_id)
+                yield event.plain_result(f"已删除任务 [{match.job_id[:8]}]")
+            except Exception as e:
+                yield event.plain_result(f"删除失败: {e}")
+            return
+
+        if sub == "clear":
+            try:
+                jobs = await cron_mgr.list_jobs("active_agent")
+            except Exception as e:
+                yield event.plain_result(f"获取任务失败: {e}")
+                return
+            our_jobs = [j for j in jobs if j.name.startswith(f"opencode:{umo}:")]
+            for j in our_jobs:
+                try:
+                    await cron_mgr.delete_job(j.job_id)
+                except Exception:
+                    pass
+            yield event.plain_result(f"已清空 {len(our_jobs)} 个调度任务")
+            return
+
+        yield event.plain_result("未知子命令。用法: /oc schedule [list]|remove <ID前缀>|clear")
 
     # ──── 辅助方法 ────
 

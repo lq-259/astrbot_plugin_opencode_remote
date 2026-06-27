@@ -138,6 +138,9 @@ class OpenCodeRemotePlugin(Star):
                 "opencode_list_files": "tool_list_files",
                 "opencode_create_session": "tool_create_session",
                 "opencode_stop": "tool_stop",
+                "opencode_schedule_task": "tool_schedule_task",
+                "opencode_list_scheduled_tasks": "tool_list_scheduled_tasks",
+                "opencode_cancel_scheduled_task": "tool_cancel_scheduled_task",
             }
             for tool in getattr(tool_mgr, "func_list", []):
                 name = getattr(tool, "name", "")
