@@ -18,10 +18,12 @@ class SSEListener:
         client,
         notify_callback: Callable[[str, str, str], Awaitable[None]],
         state_mgr,
+        plugin=None,
     ):
         self.client = client
         self.notify_callback = notify_callback
         self.state_mgr = state_mgr
+        self.plugin = plugin
         self.output_level: str = "simple"
         self._summary_msg_count: int = 5
         self._max_reconnect: int = 10
@@ -52,10 +54,12 @@ class SSEListener:
         output_level: str = "simple",
         summary_msg_count: int = 5,
         max_reconnect_attempts: int = 10,
+        reconnect_backoff_base: int = 2,
     ):
         self.output_level = output_level
         self._summary_msg_count = summary_msg_count
         self._max_reconnect = max_reconnect_attempts
+        self._reconnect_backoff_base = reconnect_backoff_base
 
         if self._task and not self._task.done():
             logger.info("SSE 监听已在运行，跳过重复启动")
@@ -103,6 +107,7 @@ class SSEListener:
     async def _listen_loop(self):
         backoff = 1
         max_backoff = 60
+        backoff_base = getattr(self, "_reconnect_backoff_base", 2)
 
         while True:
             resp = None
@@ -135,6 +140,7 @@ class SSEListener:
                 return
             except Exception as e:
                 self.conn_fail_count += 1
+                self.plugin.stats["sse_reconnects"] += 1
                 self.conn_error = f"{type(e).__name__}: {e}"
                 logger.warning("SSE 断线: %s, %ds 后重连", self.conn_error, backoff)
             finally:
@@ -164,7 +170,7 @@ class SSEListener:
                 continue
 
             await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
+            backoff = min(backoff * backoff_base, max_backoff)
 
     def _extract_session_id(self, props: dict) -> str:
         sid = props.get("sessionID", "")

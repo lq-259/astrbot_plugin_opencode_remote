@@ -57,6 +57,15 @@ class OpenCodeRemotePlugin(Star):
         self.pending_mgr = PendingManager()
         self.state_mgr.pending_mgr = self.pending_mgr
 
+        # Runtime stats
+        self.stats = {
+            "tasks_sent": 0,
+            "tasks_completed": 0,
+            "tasks_failed": 0,
+            "total_response_time": 0.0,
+            "sse_reconnects": 0,
+        }
+
         self.cmd_handlers = CommandHandlers(self)
 
         self.notification_mgr = NotificationManager(self.context, self.state_mgr)
@@ -64,6 +73,7 @@ class OpenCodeRemotePlugin(Star):
             self.client,
             self.notification_mgr.push_notification,
             self.state_mgr,
+            plugin=self,
         )
 
         self.llm_integration = LLMIntegration(self)
@@ -95,6 +105,7 @@ class OpenCodeRemotePlugin(Star):
             output_level=notify_cfg.get("output_level", "simple"),
             summary_msg_count=notify_cfg.get("summary_msg_count", 5),
             max_reconnect_attempts=notify_cfg.get("max_reconnect_attempts", 10),
+            reconnect_backoff_base=notify_cfg.get("reconnect_backoff_base", 2),
         )
         logger.info(f"SSE 监听已启动，推送级别: {self.sse_listener.output_level}")
 
@@ -147,6 +158,8 @@ class OpenCodeRemotePlugin(Star):
 
     async def send_task_to_opencode(self, text: str, umo: str, session_id: str = None) -> str:
         """向 OpenCode 发送任务，返回格式化后的结果文本。"""
+        import time as _time
+        start_time = _time.monotonic()
         directory = self.state_mgr.get_current_directory(umo)
         if not directory:
             directory = self.path_mgr.default_workdir
@@ -183,13 +196,17 @@ class OpenCodeRemotePlugin(Star):
         agent = local_agent or None
 
         try:
+            self.stats["tasks_sent"] += 1
             result = await self.client.session_prompt(
                 sid, text, directory=directory,
                 model=model_body, agent=agent, variant=variant
             )
             response_text = extract_text_from_parts(result.get("parts", []))
+            self.stats["tasks_completed"] += 1
+            self.stats["total_response_time"] += _time.monotonic() - start_time
             return format_response_with_meta(response_text or "(无响应)", self.state_mgr.get_window_state(umo))
         except (httpx.HTTPError, json.JSONDecodeError, Exception) as e:
+            self.stats["tasks_failed"] += 1
             return f"请求失败: {e}"
 
     # ──── 权限 ────

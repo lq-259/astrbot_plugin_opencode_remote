@@ -212,6 +212,7 @@ class CommandHandlers:
         "branches": ("会话", False),
         "log": ("会话", True),
         "stash": ("会话", False),
+        "stats": ("基础", False),
     }
 
     async def route(self, event: AstrMessageEvent, remainder: str):
@@ -1527,6 +1528,66 @@ class CommandHandlers:
                 yield event.plain_result(f"stash 成功:\n{output[:500]}")
         except Exception as e:
             yield event.plain_result(f"stash 操作失败: {e}")
+
+    async def cmd_queue(self, event: AstrMessageEvent, args: str = ""):
+        """任务队列管理：查看、取消、清空"""
+        directory = self._get_directory(event)
+        task_queue = getattr(self.plugin, "task_queue", None)
+        if not task_queue:
+            yield event.plain_result("任务队列未启用")
+            return
+
+        parts = args.split(None, 1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub in ("", "list"):
+            active = task_queue.get_active(directory)
+            queue = await task_queue.get_queue(directory)
+            lines = []
+            if active:
+                lines.append(f"当前执行任务: {active['text'][:60]}...")
+            else:
+                lines.append("当前没有执行中的任务")
+            if queue:
+                lines.append(f"队列任务 ({len(queue)}):")
+                for task in queue:
+                    lines.append(f"  [{task['id']}] {task['text'][:60]}...")
+            else:
+                lines.append("队列为空")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if sub == "clear":
+            count = await task_queue.clear(directory)
+            yield event.plain_result(f"已清空 {count} 个队列任务")
+            return
+
+        if sub == "cancel":
+            task_id = parts[1].strip() if len(parts) > 1 else ""
+            if not task_id:
+                yield event.plain_result("用法: /oc queue cancel <任务ID>")
+                return
+            ok = await task_queue.cancel(directory, task_id)
+            yield event.plain_result("已取消任务" if ok else "任务不存在或不在队列中")
+            return
+
+        yield event.plain_result("未知子命令。用法: /oc queue [list]|cancel <ID>|clear")
+
+    async def cmd_stats(self, event: AstrMessageEvent):
+        """插件运行统计"""
+        stats = getattr(self.plugin, "stats", {})
+        completed = stats.get("tasks_completed", 0)
+        total_time = stats.get("total_response_time", 0.0)
+        avg = total_time / max(completed, 1)
+        lines = [
+            "📊 运行统计",
+            f"  任务发送: {stats.get('tasks_sent', 0)}",
+            f"  任务完成: {completed}",
+            f"  任务失败: {stats.get('tasks_failed', 0)}",
+            f"  平均响应: {avg:.2f}s",
+            f"  SSE 重连: {stats.get('sse_reconnects', 0)}",
+        ]
+        yield event.plain_result("\n".join(lines))
 
     # ──── 辅助方法 ────
 

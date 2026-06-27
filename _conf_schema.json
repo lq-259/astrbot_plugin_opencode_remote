@@ -71,6 +71,12 @@
         "hint": "0 表示无限重连",
         "type": "int"
       },
+      "reconnect_backoff_base": {
+        "default": 2,
+        "description": "SSE 重连退避基数(秒)",
+        "hint": "第 N 次重连等待 min(60, base^N) 秒",
+        "type": "int"
+      },
       "output_level": {
         "default": "simple",
         "description": "SSE 推送级别",
