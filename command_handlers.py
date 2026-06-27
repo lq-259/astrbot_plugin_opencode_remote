@@ -208,6 +208,10 @@ class CommandHandlers:
         "commit": ("会话", True),
         "project": ("路径", True),
         "queue": ("会话", False),
+        "branch": ("会话", True),
+        "branches": ("会话", False),
+        "log": ("会话", True),
+        "stash": ("会话", False),
     }
 
     async def route(self, event: AstrMessageEvent, remainder: str):
@@ -1415,49 +1419,114 @@ class CommandHandlers:
 
         yield event.plain_result("未知子命令。用法: /oc project add|remove|list|use")
 
-    async def cmd_queue(self, event: AstrMessageEvent, args: str = ""):
-        """任务队列管理：查看、取消、清空"""
-        directory = self._get_directory(event)
-        task_queue = getattr(self.plugin, "task_queue", None)
-        if not task_queue:
-            yield event.plain_result("任务队列未启用")
+    async def cmd_branch(self, event: AstrMessageEvent, name: str = ""):
+        """创建并切换到新分支"""
+        if not name:
+            yield event.plain_result("用法: /oc branch <分支名>")
             return
+        directory = self._get_directory(event)
+        if not directory:
+            yield event.plain_result("未绑定工作目录")
+            return
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", directory, "checkout", "-b", name,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            out, err = await proc.communicate()
+            output = (out + err).decode().strip()
+            if proc.returncode != 0:
+                yield event.plain_result(f"创建分支失败: {output[:500]}")
+                return
+            yield event.plain_result(f"已创建并切换到分支: {name}\n{output[:500]}")
+        except Exception as e:
+            yield event.plain_result(f"创建分支失败: {e}")
 
+    async def cmd_branches(self, event: AstrMessageEvent):
+        """列出所有分支"""
+        directory = self._get_directory(event)
+        if not directory:
+            yield event.plain_result("未绑定工作目录")
+            return
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", directory, "branch", "-a",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            out, _ = await proc.communicate()
+            output = out.decode().strip()
+            if not output:
+                yield event.plain_result("没有分支")
+                return
+            yield event.plain_result(f"分支列表:\n{output[:2000]}")
+        except Exception as e:
+            yield event.plain_result(f"获取分支失败: {e}")
+
+    async def cmd_log(self, event: AstrMessageEvent, args: str = ""):
+        """查看最近提交日志"""
+        directory = self._get_directory(event)
+        if not directory:
+            yield event.plain_result("未绑定工作目录")
+            return
+        try:
+            count = int(args) if args.isdigit() else 10
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", directory, "log", "--oneline", "-n", str(count),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            out, _ = await proc.communicate()
+            output = out.decode().strip()
+            if not output:
+                yield event.plain_result("没有提交记录")
+                return
+            yield event.plain_result(f"最近 {count} 条提交:\n{output[:2000]}")
+        except Exception as e:
+            yield event.plain_result(f"获取日志失败: {e}")
+
+    async def cmd_stash(self, event: AstrMessageEvent, args: str = ""):
+        """暂存变更：stash / stash pop / stash list"""
+        directory = self._get_directory(event)
+        if not directory:
+            yield event.plain_result("未绑定工作目录")
+            return
         parts = args.split(None, 1)
         sub = parts[0].lower() if parts else ""
-
-        if sub in ("", "list"):
-            active = task_queue.get_active(directory)
-            queue = await task_queue.get_queue(directory)
-            lines = []
-            if active:
-                lines.append(f"当前执行任务: {active['text'][:60]}...")
+        try:
+            if sub == "pop":
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "-C", directory, "stash", "pop",
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                out, err = await proc.communicate()
+                output = (out + err).decode().strip()
+                if proc.returncode != 0:
+                    yield event.plain_result(f"stash pop 失败: {output[:500]}")
+                    return
+                yield event.plain_result(f"stash pop 成功:\n{output[:500]}")
+            elif sub == "list":
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "-C", directory, "stash", "list",
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                out, _ = await proc.communicate()
+                output = out.decode().strip()
+                if not output:
+                    yield event.plain_result("没有 stash 记录")
+                    return
+                yield event.plain_result(f"stash 列表:\n{output[:2000]}")
             else:
-                lines.append("当前没有执行中的任务")
-            if queue:
-                lines.append(f"队列任务 ({len(queue)}):")
-                for task in queue:
-                    lines.append(f"  [{task['id']}] {task['text'][:60]}...")
-            else:
-                lines.append("队列为空")
-            yield event.plain_result("\n".join(lines))
-            return
-
-        if sub == "clear":
-            count = await task_queue.clear(directory)
-            yield event.plain_result(f"已清空 {count} 个队列任务")
-            return
-
-        if sub == "cancel":
-            task_id = parts[1].strip() if len(parts) > 1 else ""
-            if not task_id:
-                yield event.plain_result("用法: /oc queue cancel <任务ID>")
-                return
-            ok = await task_queue.cancel(directory, task_id)
-            yield event.plain_result("已取消任务" if ok else "任务不存在或不在队列中")
-            return
-
-        yield event.plain_result("未知子命令。用法: /oc queue [list]|cancel <ID>|clear")
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "-C", directory, "stash", "push",
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                out, err = await proc.communicate()
+                output = (out + err).decode().strip()
+                if proc.returncode != 0:
+                    yield event.plain_result(f"stash 失败: {output[:500]}")
+                    return
+                yield event.plain_result(f"stash 成功:\n{output[:500]}")
+        except Exception as e:
+            yield event.plain_result(f"stash 操作失败: {e}")
 
     # ──── 辅助方法 ────
 
