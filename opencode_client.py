@@ -207,6 +207,12 @@ class OpenCodeClient:
             f"/session/{session_id}/unrevert", directory=directory
         )
 
+    async def session_git_diff(self, session_id: str, directory: str) -> str:
+        """Get git diff for the current session's changes."""
+        resp = await self.request("GET", f"/session/{session_id}/git-diff", directory=directory)
+        resp.raise_for_status()
+        return resp.text()
+
     # === message ===
 
     async def session_messages(self, session_id: str, directory: str,

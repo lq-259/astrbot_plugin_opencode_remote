@@ -3,6 +3,7 @@ import asyncio
 import os
 import re
 import sqlite3
+import subprocess
 import time
 from typing import Optional
 from urllib.parse import urlparse
@@ -203,6 +204,8 @@ class CommandHandlers:
         "read": ("文件", True),
         "write": ("文件", True),
         "files": ("文件", True),
+        "diff": ("会话", False),
+        "commit": ("会话", True),
     }
 
     async def route(self, event: AstrMessageEvent, remainder: str):
@@ -1285,6 +1288,58 @@ class CommandHandlers:
     async def cmd_approve(self, event: AstrMessageEvent):
         count = self.pending_mgr.approve_all()
         yield event.plain_result(f"已批准全部 {count} 项请求")
+
+    async def cmd_diff(self, event: AstrMessageEvent, target: str = ""):
+        """查看会话变更 diff"""
+        sid = await self._get_session_for_cmd(event, target)
+        if not sid:
+            yield event.plain_result("未绑定会话，请先 /oc switch")
+            return
+        directory = self._get_directory(event)
+        try:
+            diff = await self.client.session_git_diff(sid, directory)
+            if not diff or not diff.strip():
+                yield event.plain_result("当前会话没有变更")
+                return
+            # Truncate if too long
+            if len(diff) > 3000:
+                diff = diff[:3000] + "\n... (内容过长，已截断)"
+            yield event.plain_result(f"会话变更 diff ({sid[:12]}):\n```diff\n{diff}\n```")
+        except httpx.HTTPError as e:
+            yield event.plain_result(f"获取 diff 失败: {e}")
+
+    async def cmd_commit(self, event: AstrMessageEvent, message: str = ""):
+        """封装 git add + git commit"""
+        if not message:
+            yield event.plain_result("用法: /oc commit <提交信息>")
+            return
+        directory = self._get_directory(event)
+        if not directory:
+            yield event.plain_result("未绑定工作目录")
+            return
+        # Run git commands in the workdir
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", directory, "add", "-A",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            _, err = await proc.communicate()
+            if proc.returncode != 0:
+                yield event.plain_result(f"git add 失败: {err.decode()[:200]}")
+                return
+
+            proc2 = await asyncio.create_subprocess_exec(
+                "git", "-C", directory, "commit", "-m", message,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            out, err2 = await proc2.communicate()
+            output = (out + err2).decode().strip()
+            if proc2.returncode != 0:
+                yield event.plain_result(f"git commit 失败: {output[:500]}")
+                return
+            yield event.plain_result(f"已提交:\n{output[:500]}")
+        except Exception as e:
+            yield event.plain_result(f"提交失败: {e}")
 
     # ──── 辅助方法 ────
 

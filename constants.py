@@ -82,6 +82,8 @@ HELP_TOPICS = {
         ("share", "分享当前会话"),
         ("unshare", "取消分享"),
         ("messages [轮数]", "查看最近消息"),
+        ("diff [序号|ID前缀]", "查看会话 Git 变更"),
+        ("commit <信息>", "执行 git add -A && git commit"),
         ("agent [build|plan]", "设置 Agent 模式 (build/plan)"),
     ],
     "消息": [
@@ -110,7 +112,7 @@ HELP_TOPICS = {
         ("bind", "设置当前窗口为默认通知窗口"),
         ("bind status", "查看绑定状态"),
         ("bind reset", "清除通知绑定"),
-        ("output [级别]", "切换推送级别"),
+        ("output [级别]", "切换推送级别 (silence/simple/summary/detail)"),
     ],
     "审批": [
         ("pending", "查看待审批列表"),

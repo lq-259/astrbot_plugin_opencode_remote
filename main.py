@@ -7,6 +7,8 @@ import httpx
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
+from astrbot.core.message.components import At
+from astrbot.core.platform.message_type import MessageType
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.message_components import Plain
 
@@ -316,7 +318,18 @@ class OpenCodeRemotePlugin(Star):
         if not self.router.enable_auto_route or self.router.mode == "off":
             return
 
-        decision = self.router.classify(raw)
+        # Group mention detection
+        is_group = not event.is_private_chat()
+        is_mentioned = False
+        if is_group and self.router.ignore_group_no_mention:
+            self_id = event.get_self_id()
+            for comp in getattr(event.message_obj, "message", []):
+                if isinstance(comp, At):
+                    if str(comp.qq) == str(self_id) or str(comp.qq) == "all":
+                        is_mentioned = True
+                        break
+
+        decision = self.router.classify(raw, is_group=is_group, is_mentioned=is_mentioned)
 
         if decision.action == "chat":
             return
@@ -332,9 +345,11 @@ class OpenCodeRemotePlugin(Star):
             return
 
         # confirm mode
+        task_preview = decision.rewritten_task[:80] + "..." if len(decision.rewritten_task) > 80 else decision.rewritten_task
         yield event.plain_result(
-            f"这看起来是代码任务（{decision.reason}），确认交给 OpenCode 执行吗？\n"
-            f"回复「确认」执行，其他内容取消"
+            f"🛠 这看起来是代码任务（置信度 {decision.confidence:.0%}）：{decision.reason}\n"
+            f"任务预览：{task_preview}\n\n"
+            f"回复「确认」交给 OpenCode 执行，其他内容取消。"
         )
 
         approved = False
@@ -352,13 +367,14 @@ class OpenCodeRemotePlugin(Star):
             await wait_confirm(event)
             await choice_event.wait()
         except TimeoutError:
-            yield event.plain_result("确认超时，已取消")
+            yield event.plain_result("⏱ 确认超时，已取消")
             return
 
         if approved:
+            yield event.plain_result("🚀 已提交 OpenCode，请稍候...")
             result = await self.send_task_to_opencode(
                 decision.rewritten_task, event.unified_msg_origin
             )
             yield event.plain_result(f"[OpenCode] {result}")
         else:
-            yield event.plain_result("已取消")
+            yield event.plain_result("❌ 已取消")

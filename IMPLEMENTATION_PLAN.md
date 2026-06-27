@@ -796,17 +796,19 @@ async def cmd_work(self, event, text=""):
 - 修改 `main.py`，让 `quick_prefix_handler` 复用公共发送方法。
 - 修改 `main.py`，新增 `auto_route_handler`。
 - 修改 `command_handlers.py`，新增 `/oc work`。
+- 修改 `command_handlers.py`，新增 `/oc diff`（查看会话 Git 变更）。
+- 修改 `command_handlers.py`，新增 `/oc commit`（封装 git add + git commit）。
+- 修改 `router.py`，新增群聊 @ 精准检测（未 @ 不触发自动路由）。
+- 修改 `router.py`，优化路由关键词和确认提示文案。
 - 新增 `README.md`。
 - 新增本实施计划文档。
 
 当前仍未实现：
 
-- 群聊 @ 精准检测。
 - LLM 意图分类。
 - 多项目别名。
 - 每项目任务队列。
 - Git diff 专用摘要命令。
-- 一键 commit 和 PR 流程。
 
 ## 14. 后续路线图
 

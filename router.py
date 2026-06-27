@@ -22,11 +22,21 @@ class MessageRouter:
         self.confirm_threshold = router_cfg.get("confirm_threshold", 0.65)
         self.auto_threshold = router_cfg.get("auto_threshold", 0.85)
         self.work_keywords = [kw.lower() for kw in router_cfg.get("work_keywords", [])]
+        self.ignore_group_no_mention = router_cfg.get("ignore_group_messages_without_mention", True)
 
-    def classify(self, raw_text: str) -> RouteDecision:
+    def classify(self, raw_text: str, is_group: bool = False, is_mentioned: bool = False) -> RouteDecision:
         """判断一条消息应该 chat / confirm / opencode"""
         text = raw_text.strip()
         lower = text.lower()
+
+        # 0. 群聊中未 @ 时直接放行（如果配置允许）
+        if is_group and not is_mentioned and self.ignore_group_no_mention:
+            return RouteDecision(
+                action="chat",
+                reason="群聊中未 @ 机器人",
+                confidence=0.0,
+                rewritten_task="",
+            )
 
         # 1. 显式前缀路由（最高优先级，不受 mode 限制）
         for prefix in self.work_prefixes:
@@ -104,21 +114,9 @@ class MessageRouter:
             (r"能否.*(帮我|给我|写|改|实现)", "请求句式：能否...", 0.10),
             (r"请.*(修|改|写|加|实现|优化|重构)", "祈使句式：请...", 0.10),
             (r"(看看|看看怎么|查一下|检查一下|分析一下).*(代码|报错|问题|bug|错误)", "检查句式", 0.10),
-            (r"(跑不通|跑不起来|报错|出错|失败|崩|挂).*(哪|为什么|怎么)", "故障排查句式", 0.15),
-            (r"(ci|构建|build|测试|验证|lint).*(失败|不过|报错|不过|failed)" if False else r"(ci|构建|测试|验证).*(失败|不过|报错)", "CI/构建句式", 0.12),
+            (r"(跑不通|跑不起来|报错|出错|失败|崩|挂).*[吗呢哪为什么怎么]", "故障排查句式", 0.15),
+            (r"(ci|构建|build|测试|验证).*(失败|不过|报错)", "CI/构建句式", 0.12),
         ]
-
-        # 修正 pattern 3
-        patterns[5] = (
-            r"(跑不通|跑不起来|报错|出错|失败).*(吗|呢|哪|为什么|怎么)",
-            "故障排查句式",
-            0.15
-        )
-        patterns[6] = (
-            r"(ci|构建|测试|验证).*(失败|不过|报错|不过)",
-            "CI/构建句式",
-            0.12
-        )
 
         for pat, reason_text, add in patterns:
             if re.search(pat, text):
