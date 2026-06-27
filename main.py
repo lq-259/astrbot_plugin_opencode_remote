@@ -23,6 +23,7 @@ from .sse_listener import SSEListener
 from .notification_manager import NotificationManager
 from .llm_integration import LLMIntegration
 from .router import MessageRouter
+from .task_queue import TaskQueue
 
 
 @register(
@@ -71,6 +72,7 @@ class OpenCodeRemotePlugin(Star):
             "quick_prefix", ">"
         )
         self.router = MessageRouter(config)
+        self.task_queue = TaskQueue(self)
 
     # ──── 生命周期 ────
 
@@ -165,6 +167,13 @@ class OpenCodeRemotePlugin(Star):
 
         if not sid:
             return "未绑定会话"
+
+        # 任务队列：同一目录同时只能有一个 active 任务
+        if self.task_queue.is_active(directory):
+            task_id = await self.task_queue.enqueue(umo, directory, text)
+            return f"当前目录有任务正在执行，已加入队列（任务 ID: {task_id}）"
+
+        await self.task_queue.set_active(directory, umo, text, sid)
 
         local_model = self.state_mgr.get_current_model(umo)
         local_variant = self.state_mgr.get_current_variant(umo)

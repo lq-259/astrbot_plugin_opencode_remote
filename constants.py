@@ -88,6 +88,9 @@ HELP_TOPICS = {
         ("messages [轮数]", "查看最近消息"),
         ("diff [序号|ID前缀]", "查看会话 Git 变更"),
         ("commit <信息>", "执行 git add -A && git commit"),
+        ("queue [list]", "查看任务队列"),
+        ("queue cancel <ID>", "取消队列中的任务"),
+        ("queue clear", "清空任务队列"),
         ("agent [build|plan]", "设置 Agent 模式 (build/plan)"),
     ],
     "消息": [

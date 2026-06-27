@@ -425,6 +425,18 @@ class SSEListener:
             if now - last < 10:
                 return
             self._idle_notified[session_id] = now
+            # Notify task queue to process next task
+            if directory and self.state_mgr:
+                task_queue = getattr(self.state_mgr, "task_queue", None)
+                if not task_queue:
+                    plugin = getattr(self.state_mgr, "plugin", None)
+                    if plugin:
+                        task_queue = getattr(plugin, "task_queue", None)
+                if task_queue:
+                    try:
+                        await task_queue.on_session_idle(session_id, directory)
+                    except Exception as e:
+                        logger.warning("TaskQueue on_session_idle failed: %s", e)
 
         label = EVENT_TYPES_CHINESE.get(event_type, event_type)
         if event_type in ("permission.updated", "permission.asked"):
