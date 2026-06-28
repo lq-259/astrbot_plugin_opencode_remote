@@ -95,11 +95,16 @@ class MessageRouter:
             llm_callable: 异步 callable，接收 system_prompt 和 prompt，返回 LLMResponse 或字符串
         """
         system = (
-            "你是一个消息意图分类器。判断用户消息是否是代码工作任务。"
+            "你是一个消息意图分类器。判断用户消息是否希望操作或查询 OpenCode。"
+            "OpenCode 相关任务包括但不限于："
+            "1. 代码开发、修复、重构、调试、测试、部署；"
+            "2. 查询 OpenCode 会话、目录、模型、文件、状态；"
+            "3. 创建/切换/重命名/删除 OpenCode 会话；"
+            "4. 让 OpenCode 执行某个具体命令或任务。"
             "只返回 JSON，不要任何解释。格式："
-            '{"is_work_task": true/false, "confidence": 0.0~1.0, "reason": "简短原因"}'
+            '{"is_opencode_task": true/false, "confidence": 0.0~1.0, "reason": "简短原因"}'
         )
-        prompt = f"用户消息：{raw_text}\n\n请判断这是否是代码工作任务。"
+        prompt = f"用户消息：{raw_text}\n\n请判断这是否是希望 OpenCode 执行或查询的任务。"
         try:
             resp = await llm_callable(system_prompt=system, prompt=prompt)
             # Parse JSON from response
@@ -118,7 +123,7 @@ class MessageRouter:
             if not json_match:
                 return None
             result = json.loads(json_match.group())
-            is_work = result.get("is_work_task", False)
+            is_work = result.get("is_opencode_task", result.get("is_work_task", False))
             confidence = float(result.get("confidence", 0.0))
             reason = result.get("reason", "LLM 判断")
 
@@ -139,7 +144,7 @@ class MessageRouter:
             else:
                 return RouteDecision(
                     action="chat",
-                    reason=f"LLM 判断非工作任务：{reason}",
+                    reason=f"LLM 判断非 OpenCode 任务：{reason}",
                     confidence=confidence,
                     rewritten_task="",
                 )
