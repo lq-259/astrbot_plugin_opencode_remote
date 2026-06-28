@@ -224,8 +224,8 @@ class OpenCodeRemotePlugin(Star):
                 prompt=prompt,
                 func_tool=None,
             )
-            # 使用当前默认 provider
-            provider = self.context.get_provider()
+            # 使用当前默认 provider（通过 provider_manager 获取）
+            provider = self.context.get_using_provider()
             if not provider:
                 return None
             resp = await provider.text_chat(**req.__dict__)
