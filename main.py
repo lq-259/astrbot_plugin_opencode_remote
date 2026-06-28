@@ -89,6 +89,7 @@ class OpenCodeRemotePlugin(Star):
     async def initialize(self):
         await self.state_mgr.load_all()
         self._fix_llm_tool_origin()
+        self.llm_integration.sync_tool_activation()
 
         try:
             health = await self.client.health()

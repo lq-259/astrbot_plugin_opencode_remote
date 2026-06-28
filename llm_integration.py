@@ -61,7 +61,66 @@ class LLMIntegration:
         "opencode_write_file",
     }
 
+    ALL_OPENCODE_TOOLS = QUERY_TOOLS | SCHEDULE_TOOLS | ACTION_TOOLS
+
     # ──── 工具可见性控制 ────
+
+    def sync_tool_activation(self):
+        """按 tool_config 同步 AstrBot 全局 LLM 工具激活状态。
+
+        默认禁用全部 opencode_* 工具，仅开启对应 tier 时才激活，防止模型、面板
+        或其他请求路径绕过 on_llm_request_hook 直接调用。
+        """
+        try:
+            tool_mgr = self.plugin.context.get_llm_tool_manager()
+        except Exception as e:
+            logger.debug(f"OpenCode 工具激活同步失败: {e}")
+            return
+
+        allowed = self._allowed_tool_names()
+        for tool in getattr(tool_mgr, "func_list", []):
+            name = getattr(tool, "name", "")
+            if name not in self.ALL_OPENCODE_TOOLS:
+                continue
+            try:
+                if name in allowed:
+                    self.plugin.context.activate_llm_tool(name)
+                else:
+                    self.plugin.context.deactivate_llm_tool(name)
+            except Exception as e:
+                logger.debug(f"同步工具 {name} 激活状态失败: {e}")
+
+    def _allowed_tool_names(self) -> set[str]:
+        """根据当前配置返回允许使用的 opencode 工具名集合。"""
+        tool_cfg = self.plugin.config.get("tool_config", {})
+        enable_query = tool_cfg.get("enable_llm_query_tools", False)
+        enable_schedule = tool_cfg.get("enable_llm_schedule_tools", False)
+        enable_action = tool_cfg.get("enable_llm_action_tools", False)
+
+        allowed = set()
+        if enable_query:
+            allowed |= self.QUERY_TOOLS
+        if enable_schedule:
+            allowed |= self.QUERY_TOOLS | self.SCHEDULE_TOOLS
+        if enable_action:
+            allowed |= self.QUERY_TOOLS | self.SCHEDULE_TOOLS | self.ACTION_TOOLS
+        return allowed
+
+    def _tool_allowed(self, tool_name: str) -> bool:
+        """检查当前配置是否允许使用指定工具。"""
+        return tool_name in self._allowed_tool_names()
+
+    def _tool_auth_error(self, tool_name: str):
+        """生成工具被禁用的提示。"""
+        tier = "查询"
+        if tool_name in self.SCHEDULE_TOOLS:
+            tier = "调度"
+        elif tool_name in self.ACTION_TOOLS:
+            tier = "执行"
+        return (
+            f"工具 {tool_name} 未启用（属于 {tier} 层工具）。"
+            f"请在插件配置的 tool_config 中开启 enable_llm_{tier.lower()}_tools 后再试。"
+        )
 
     async def on_llm_request_hook(self, event: AstrMessageEvent, request: ProviderRequest):
         tool_cfg = self.plugin.config.get("tool_config", {})
@@ -77,15 +136,7 @@ class LLMIntegration:
             self._remove_all_tools(request)
             return
 
-        # Determine allowed set based on tier hierarchy
-        allowed = set()
-        if enable_query:
-            allowed |= self.QUERY_TOOLS
-        if enable_schedule:
-            allowed |= self.QUERY_TOOLS | self.SCHEDULE_TOOLS
-        if enable_action:
-            allowed |= self.QUERY_TOOLS | self.SCHEDULE_TOOLS | self.ACTION_TOOLS
-
+        allowed = self._allowed_tool_names()
         self._filter_tools(request, allowed)
 
     def _remove_all_tools(self, request: ProviderRequest):
@@ -293,6 +344,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_get_session_detail")
     async def tool_get_session_detail(self, event: AstrMessageEvent):
+        if not self._tool_allowed("opencode_get_session_detail"):
+            yield self._tool_auth_error("opencode_get_session_detail")
+            return
         '''获取当前 OpenCode 会话详情，包括完整 ID、目录、实际模型、agent 和思考等级。'''
         umo = event.unified_msg_origin
         state = await self._sync_actual_session_meta(umo)
@@ -320,6 +374,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_search_sessions")
     async def tool_search_sessions(self, event: AstrMessageEvent, keyword: str = ""):
+        if not self._tool_allowed("opencode_search_sessions"):
+            yield self._tool_auth_error("opencode_search_sessions")
+            return
         '''搜索 OpenCode 会话，可按标题、ID 前缀或目录关键词查找。
 
         Args:
@@ -331,6 +388,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_list_workdirs")
     async def tool_list_workdirs(self, event: AstrMessageEvent):
+        if not self._tool_allowed("opencode_list_workdirs"):
+            yield self._tool_auth_error("opencode_list_workdirs")
+            return
         '''列出默认工作目录、白名单目录和最近使用目录。'''
         current = self.state_mgr.get_current_directory(event.unified_msg_origin) or "未设置"
         lines = [f"当前目录: {current}", f"默认目录: {self.path_mgr.default_workdir}"]
@@ -348,6 +408,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_switch_workdir")
     async def tool_switch_workdir(self, event: AstrMessageEvent, path: str):
+        if not self._tool_allowed("opencode_switch_workdir"):
+            yield self._tool_auth_error("opencode_switch_workdir")
+            return
         '''切换 OpenCode 工作目录。路径必须通过插件白名单安全检查。
 
         Args:
@@ -371,6 +434,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_get_recent_messages")
     async def tool_get_recent_messages(self, event: AstrMessageEvent, limit: int = 5):
+        if not self._tool_allowed("opencode_get_recent_messages"):
+            yield self._tool_auth_error("opencode_get_recent_messages")
+            return
         '''获取当前会话最近消息摘要。
 
         Args:
@@ -404,6 +470,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_get_last_error")
     async def tool_get_last_error(self, event: AstrMessageEvent):
+        if not self._tool_allowed("opencode_get_last_error"):
+            yield self._tool_auth_error("opencode_get_last_error")
+            return
         '''获取当前会话最近一次 OpenCode 或模型供应商错误。'''
         sid = self.state_mgr.get_current_session(event.unified_msg_origin)
         if not sid:
@@ -414,6 +483,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_list_models")
     async def tool_list_models(self, event: AstrMessageEvent, keyword: str = ""):
+        if not self._tool_allowed("opencode_list_models"):
+            yield self._tool_auth_error("opencode_list_models")
+            return
         '''搜索可用模型。
 
         Args:
@@ -455,6 +527,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_clear_model_override")
     async def tool_clear_model_override(self, event: AstrMessageEvent):
+        if not self._tool_allowed("opencode_clear_model_override"):
+            yield self._tool_auth_error("opencode_clear_model_override")
+            return
         '''清除本地模型、思考等级和 agent 覆盖，恢复使用 Web 会话显示的配置。'''
         umo = event.unified_msg_origin
         self.state_mgr.set_window_state(umo, model=None, variant=None, agent=None)
@@ -463,6 +538,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_set_model")
     async def tool_set_model(self, event: AstrMessageEvent, model: str, variant: str = ""):
+        if not self._tool_allowed("opencode_set_model"):
+            yield self._tool_auth_error("opencode_set_model")
+            return
         '''设置本地模型和思考等级覆盖。
 
         Args:
@@ -479,6 +557,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_set_agent")
     async def tool_set_agent(self, event: AstrMessageEvent, agent: str):
+        if not self._tool_allowed("opencode_set_agent"):
+            yield self._tool_auth_error("opencode_set_agent")
+            return
         '''设置本地 agent 覆盖。
 
         Args:
@@ -491,6 +572,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_list_commands")
     async def tool_list_commands(self, event: AstrMessageEvent, topic: str = ""):
+        if not self._tool_allowed("opencode_list_commands"):
+            yield self._tool_auth_error("opencode_list_commands")
+            return
         '''列出 OpenCode 可用命令或帮助主题。话题可选: 基础/路径/会话/消息/指令/模型/通知/审批
 
         Args:
@@ -502,6 +586,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_send_message")
     async def tool_send_message(self, event: AstrMessageEvent, message: str, target: str = ""):
+        if not self._tool_allowed("opencode_send_message"):
+            yield self._tool_auth_error("opencode_send_message")
+            return
         '''向 OpenCode 会话发送任务。target 为空时发送到当前会话。会走任务队列和敏感词检查。
 
         Args:
@@ -541,6 +628,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_switch_session")
     async def tool_switch_session(self, event: AstrMessageEvent, target: str):
+        if not self._tool_allowed("opencode_switch_session"):
+            yield self._tool_auth_error("opencode_switch_session")
+            return
         '''切换到指定会话。
 
         Args:
@@ -583,6 +673,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_rename_session")
     async def tool_rename_session(self, event: AstrMessageEvent, title: str):
+        if not self._tool_allowed("opencode_rename_session"):
+            yield self._tool_auth_error("opencode_rename_session")
+            return
         '''重命名当前 OpenCode 会话。
 
         Args:
@@ -604,6 +697,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_archive_session")
     async def tool_archive_session(self, event: AstrMessageEvent, target: str = ""):
+        if not self._tool_allowed("opencode_archive_session"):
+            yield self._tool_auth_error("opencode_archive_session")
+            return
         '''归档指定 OpenCode 会话。不传 target 时归档当前会话。
 
         Args:
@@ -627,6 +723,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_unarchive_session")
     async def tool_unarchive_session(self, event: AstrMessageEvent, target: str = ""):
+        if not self._tool_allowed("opencode_unarchive_session"):
+            yield self._tool_auth_error("opencode_unarchive_session")
+            return
         '''取消归档指定 OpenCode 会话。不传 target 时取消归档当前会话。
 
         Args:
@@ -650,6 +749,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_delete_session")
     async def tool_delete_session(self, event: AstrMessageEvent, target: str):
+        if not self._tool_allowed("opencode_delete_session"):
+            yield self._tool_auth_error("opencode_delete_session")
+            return
         '''删除指定 OpenCode 会话。需要人工审批。
 
         Args:
@@ -699,6 +801,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_run_command")
     async def tool_run_command(self, event: AstrMessageEvent, command: str, arguments: str = ""):
+        if not self._tool_allowed("opencode_run_command"):
+            yield self._tool_auth_error("opencode_run_command")
+            return
         '''执行 OpenCode 内置 command。
 
         Args:
@@ -719,6 +824,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_create_session")
     async def tool_create_session(self, event: AstrMessageEvent, title: str = ""):
+        if not self._tool_allowed("opencode_create_session"):
+            yield self._tool_auth_error("opencode_create_session")
+            return
         '''创建新的 OpenCode 会话。
 
         Args:
@@ -741,19 +849,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_stop")
     async def tool_stop(self, event: AstrMessageEvent):
-        '''停止当前 OpenCode 会话的任务。'''
-        umo = event.unified_msg_origin
-        sid = self.state_mgr.get_current_session(umo)
-        directory = self.state_mgr.get_current_directory(umo)
-        if not sid or not directory:
-            yield "未绑定会话"
+        if not self._tool_allowed("opencode_stop"):
+            yield self._tool_auth_error("opencode_stop")
             return
-        try:
-            await self.client.session_abort(sid, directory)
-            yield f"已停止会话 ({sid[:12]})"
-        except Exception as e:
-            yield f"停止失败: {e}"
-    async def tool_stop(self, event: AstrMessageEvent):
         '''停止当前 OpenCode 会话的任务。'''
         umo = event.unified_msg_origin
         sid = self.state_mgr.get_current_session(umo)
@@ -769,6 +867,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_read_file")
     async def tool_read_file(self, event: AstrMessageEvent, file_path: str):
+        if not self._tool_allowed("opencode_read_file"):
+            yield self._tool_auth_error("opencode_read_file")
+            return
         '''读取 OpenCode 工作目录中的文件内容。
 
         Args:
@@ -793,6 +894,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_write_file")
     async def tool_write_file(self, event: AstrMessageEvent, file_path: str, content: str):
+        if not self._tool_allowed("opencode_write_file"):
+            yield self._tool_auth_error("opencode_write_file")
+            return
         '''向 OpenCode 工作目录写入文件内容（覆盖写入）。
 
         Args:
@@ -812,6 +916,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_list_files")
     async def tool_list_files(self, event: AstrMessageEvent, path: str = ""):
+        if not self._tool_allowed("opencode_list_files"):
+            yield self._tool_auth_error("opencode_list_files")
+            return
         '''列出 OpenCode 工作目录中的文件和子目录。
 
         Args:
@@ -846,6 +953,9 @@ class LLMIntegration:
         cron: str = "",
         run_at: str = "",
     ):
+        if not self._tool_allowed("opencode_schedule_task"):
+            yield self._tool_auth_error("opencode_schedule_task")
+            return
         '''调度一个 OpenCode 任务在将来执行（通过 AstrBot 主动 Agent 能力）。
 
         Args:
@@ -926,6 +1036,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_list_scheduled_tasks")
     async def tool_list_scheduled_tasks(self, event: AstrMessageEvent):
+        if not self._tool_allowed("opencode_list_scheduled_tasks"):
+            yield self._tool_auth_error("opencode_list_scheduled_tasks")
+            return
         '''列出当前会话已调度的 OpenCode 任务。'''
         cron_mgr = getattr(self.plugin.context, "cron_manager", None)
         if cron_mgr is None:
@@ -953,6 +1066,9 @@ class LLMIntegration:
 
     @filter.llm_tool(name="opencode_cancel_scheduled_task")
     async def tool_cancel_scheduled_task(self, event: AstrMessageEvent, job_id_prefix: str):
+        if not self._tool_allowed("opencode_cancel_scheduled_task"):
+            yield self._tool_auth_error("opencode_cancel_scheduled_task")
+            return
         '''取消调度的 OpenCode 任务。
 
         Args:
