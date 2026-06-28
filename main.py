@@ -213,6 +213,27 @@ class OpenCodeRemotePlugin(Star):
             self.stats["tasks_failed"] += 1
             return f"请求失败: {e}"
 
+    # ──── LLM 意图分类调用 ────
+
+    async def _llm_intent_call(self, system_prompt: str, prompt: str):
+        """调用 AstrBot 的 LLM 进行意图分类。"""
+        try:
+            from astrbot.api.provider import ProviderRequest
+            req = ProviderRequest(
+                system_prompt=system_prompt,
+                prompt=prompt,
+                func_tool=None,
+            )
+            # 使用当前默认 provider
+            provider = self.context.get_provider()
+            if not provider:
+                return None
+            resp = await provider.text_chat(**req.__dict__)
+            return resp
+        except Exception as e:
+            logger.debug(f"LLM 意图分类调用失败: {e}")
+            return None
+
     # ──── 权限 ────
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
@@ -361,14 +382,25 @@ class OpenCodeRemotePlugin(Star):
 
         decision = self.router.classify(raw, is_group=is_group, is_mentioned=is_mentioned)
 
-        # LLM 意图分类补充判断（仅在规则评分不确定时）
-        if decision.action in ("confirm", "opencode") and self.router.enable_llm_intent:
-            if self.confirm_threshold <= decision.confidence < self.auto_threshold:
+        # LLM 意图分类补充判断
+        if self.router.enable_llm_intent:
+            # 场景1：规则评分在 confirm 和 auto 之间，用 LLM 二次判断
+            if decision.action in ("confirm", "opencode") and self.router.confirm_threshold <= decision.confidence < self.router.auto_threshold:
                 llm_decision = await self.router.classify_with_llm(raw, self._llm_intent_call)
                 if llm_decision:
                     decision = RouteDecision(
                         action=llm_decision.action,
                         reason=f"{decision.reason}；{llm_decision.reason}",
+                        confidence=llm_decision.confidence,
+                        rewritten_task=llm_decision.rewritten_task,
+                    )
+            # 场景2：规则评分很低（< confirm_threshold），但用户可能用自然语言表达意图
+            elif decision.action == "chat" and decision.confidence < self.router.confirm_threshold:
+                llm_decision = await self.router.classify_with_llm(raw, self._llm_intent_call)
+                if llm_decision and llm_decision.action in ("confirm", "opencode"):
+                    decision = RouteDecision(
+                        action="confirm",
+                        reason=f"LLM 意图分类：{llm_decision.reason}",
                         confidence=llm_decision.confidence,
                         rewritten_task=llm_decision.rewritten_task,
                     )
