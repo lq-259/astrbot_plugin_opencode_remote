@@ -171,6 +171,10 @@ class MessageRouter:
             if kw in text:
                 keyword_hits.append(kw)
                 score += 0.08
+        # 额外：消息中直接提到 opencode 也加分
+        if "opencode" in text:
+            keyword_hits.append("opencode")
+            score += 0.15
         if keyword_hits:
             reasons.append(f"命中关键词：{', '.join(keyword_hits[:5])}")
 
