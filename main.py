@@ -218,17 +218,16 @@ class OpenCodeRemotePlugin(Star):
     async def _llm_intent_call(self, system_prompt: str, prompt: str):
         """调用 AstrBot 的 LLM 进行意图分类。"""
         try:
-            from astrbot.api.provider import ProviderRequest
-            req = ProviderRequest(
+            # 使用当前默认 provider
+            provider = self.context.get_using_provider()
+            if not provider:
+                logger.debug("LLM 意图分类: 没有可用的 provider")
+                return None
+            resp = await provider.text_chat(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 func_tool=None,
             )
-            # 使用当前默认 provider（通过 provider_manager 获取）
-            provider = self.context.get_using_provider()
-            if not provider:
-                return None
-            resp = await provider.text_chat(**req.__dict__)
             return resp
         except Exception as e:
             logger.debug(f"LLM 意图分类调用失败: {e}")
